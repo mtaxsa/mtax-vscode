@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Fetch the VS Code Lua grammar
+        id: grammar
+        continue-on-error: true
+        shell: bash
+        run: |
+          url=https://raw.githubusercontent.com/microsoft/vscode/1.85.0/extensions/lua/syntaxes/lua.tmLanguage.json
+          target="${RUNNER_TEMP}/lua.tmLanguage.json"
+          curl --fail --silent --show-error --location "$url" --output "$target"
+          echo "path=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        env:
+          MTAX_LUA_GRAMMAR: ${{ steps.grammar.outputs.path }}
+        run: npm test
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Package
+        run: npm run package:ci
+
+      - name: Check the contents of the .vsix
+        run: |
+          vsix=$(ls *.vsix)
+          echo "checking $vsix"
+          contents=$(unzip -Z1 "$vsix")
+          echo "$contents"
+          for required in \
+            extension/dist/extension.js \
+            extension/data/api.json \
+            extension/definitions/mtax-shared.lua \
+            extension/syntaxes/mtax-injection.json \
+            extension/syntaxes/mtax-events.json \
+            extension/snippets/lua.json \
+            extension/images/icon.png
+          do
+            echo "$contents" | grep -qx "$required" || { echo "::error::$required is missing from the package"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtax-lua-vsix
+          path: '*.vsix'
+          if-no-files-found: error

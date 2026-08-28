@@ -1,3 +1,4 @@
+.github/**
 .vscode/**
 src/**
 tests/**
@@ -8,3 +9,4 @@ tsconfig.json
 **/*.map
 **/*.ts
 .gitignore
+tools/release-notes.mjs

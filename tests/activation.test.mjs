@@ -200,6 +200,7 @@ server_files = {
 
 client_files = {
     "client/main.lua",
+    "client/class.lua",
 }
 
 shared_files = {
@@ -224,6 +225,18 @@ require("something")
 
 fs.writeFileSync(path.join(resourceRoot, 'server', 'main.lua'), SERVER_LUA);
 fs.writeFileSync(path.join(resourceRoot, 'client', 'main.lua'), 'setElementPosition(localPlayer, 0, 0, 5)\n');
+fs.writeFileSync(path.join(resourceRoot, 'client', 'class.lua'), `local Panel = {}
+Panel.__index = Panel
+
+function Panel:open()
+    self.visible = true
+    self:redraw()
+end
+
+function Panel:redraw()
+    dxDrawText(tostring(self.visible), 0, 0)
+end
+`);
 fs.writeFileSync(path.join(resourceRoot, 'shared', 'util.lua'), `function formatMoney(amount)
     return ("$%s"):format(tostring(amount))
 end
@@ -437,32 +450,71 @@ test('rename rewrites every reference and refuses the API', () => {
     assert.throws(() => registered.rename.prepareRename(document, native), /cannot be renamed/);
 });
 
-test('semantic tokens colour natives, locals and the wrong side', () => {
+test('semantic tokens cover what a grammar cannot, and nothing it already paints', () => {
     const document = makeDocument(path.join(resourceRoot, 'server', 'main.lua'));
     const result = registered.semantic.provideDocumentSemanticTokens(document);
-    const byName = new Map();
     const text = document.getText();
+    const lines = text.split('\n');
+    const byName = new Map();
     for (const token of result.tokens) {
-        const lineStart = text.split('\n').slice(0, token.line).join('\n').length + (token.line ? 1 : 0);
-        const name = text.slice(lineStart + token.char, lineStart + token.char + token.length);
-        byName.set(name, token);
+        const name = lines[token.line].slice(token.char, token.char + token.length);
+        if (!byName.has(name)) byName.set(name, token);
     }
 
-    const DEFAULT_LIBRARY = 1 << 2;
-    const DEPRECATED = 1 << 4;
-
-    assert.equal(byName.get('getPlayerName').type, 'function');
-    assert.ok(byName.get('getPlayerName').modifiers & DEFAULT_LIBRARY);
+    for (const name of ['getPlayerName', 'outputDebugString', 'root', 'source', 'onPlayerJoin']) {
+        assert.ok(!byName.has(name), `${name} must be left to the grammar`);
+    }
 
     assert.equal(byName.get('who').type, 'variable');
-    assert.equal(byName.get('who').modifiers & DEFAULT_LIBRARY, 0);
+    assert.equal(byName.get('who').modifiers & (1 << 0), 1 << 0, 'the declaration is marked');
 
-    assert.equal(byName.get('root').type, 'variable');
-    assert.ok(byName.get('root').modifiers & DEFAULT_LIBRARY);
+    const DEPRECATED = 1 << 4;
+    assert.ok(byName.get('dxDrawText'), 'the wrong-side native still gets a token');
+    assert.ok(byName.get('dxDrawText').modifiers & DEPRECATED);
+});
 
-    assert.ok(byName.get('dxDrawText').modifiers & DEPRECATED, 'the wrong side should read as deprecated');
+test('self keeps the Lua grammar colour and navigates to its method', () => {
+    const document = makeDocument(path.join(resourceRoot, 'client', 'class.lua'));
+    const text = document.getText();
 
-    assert.equal(byName.get('onPlayerJoin').type, 'event');
+    const tokens = registered.semantic.provideDocumentSemanticTokens(document).tokens;
+    const lines = text.split('\n');
+    const claimed = tokens.map((t) => lines[t.line].slice(t.char, t.char + t.length));
+    assert.ok(!claimed.includes('self'), 'self is left to variable.language.self.lua');
+
+    const at = document.positionAt(text.indexOf('self.visible'));
+    const definitions = registered.definition.provideDefinition(document, at);
+    assert.equal(definitions.length, 1);
+    const line = definitions[0].range.start.line;
+    assert.match(lines[line], /function Panel:open\(\)/);
+
+    const references = registered.references.provideReferences(document, at, { includeDeclaration: false });
+    assert.equal(references.length, 2);
+});
+
+test('completion after self. offers the fields of that class', () => {
+    const document = makeDocument(path.join(resourceRoot, 'client', 'class.lua'));
+    const text = document.getText();
+    const at = document.positionAt(text.indexOf('self.visible') + 'self.'.length);
+    const items = registered.completion[0].provideCompletionItems(document, at);
+
+    const labels = items.map((i) => i.label);
+    assert.ok(labels.includes('visible'), 'a field the class assigns');
+    assert.ok(labels.includes('redraw'), 'a method the class declares');
+
+    const redraw = items.find((i) => i.label === 'redraw');
+    assert.equal(redraw.detail, 'Panel.redraw function()');
+});
+
+test('self.field is the same field as Class.field', () => {
+    const document = makeDocument(path.join(resourceRoot, 'client', 'class.lua'));
+    const text = document.getText();
+
+    const at = document.positionAt(text.indexOf('self:redraw') + 6);
+    const definitions = registered.definition.provideDefinition(document, at);
+    assert.equal(definitions.length, 1);
+    const line = definitions[0].range.start.line;
+    assert.match(text.split('\n')[line], /function Panel:redraw\(\)/);
 });
 
 test('the outline of a broken file still comes back', () => {

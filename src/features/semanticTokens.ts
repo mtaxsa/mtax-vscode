@@ -19,8 +19,6 @@ export const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(
     [...MODIFIERS],
 );
 
-const STD_NAMESPACES = new Set(['math', 'string', 'table', 'os', 'coroutine', 'utf8', 'debug', 'io', 'package', '_G']);
-
 export class MtaxSemanticTokensProvider implements vscode.DocumentSemanticTokensProvider, vscode.Disposable {
     private readonly emitter = new vscode.EventEmitter<void>();
     private readonly disposables: vscode.Disposable[] = [];
@@ -63,19 +61,12 @@ export class MtaxSemanticTokensProvider implements vscode.DocumentSemanticTokens
         }
 
         for (const literal of analysis.strings) {
-            const known = this.api.event(literal.value);
-            const custom = !known && /^on[A-Z]/.test(literal.value);
-            if (!known && !custom) continue;
+            if (this.api.event(literal.value)) continue;
+            if (!/^on[A-Z]/.test(literal.value)) continue;
             const position = document.positionAt(literal.start);
             const length = literal.end - literal.start;
             if (length <= 0) continue;
-            builder.push(
-                position.line,
-                position.character,
-                length,
-                index('event'),
-                known ? bits('defaultLibrary', 'readonly') : 0,
-            );
+            builder.push(position.line, position.character, length, index('event'), 0);
         }
 
         return builder.build();
@@ -91,11 +82,11 @@ export class MtaxSemanticTokensProvider implements vscode.DocumentSemanticTokens
             case 'param':
                 return [index('parameter'), bits(...flags)];
 
-            case 'self':
-                return [index('variable'), bits('readonly', 'defaultLibrary')];
-
             case 'label':
                 return [index('label'), bits(...flags)];
+
+            case 'self':
+                return null;
 
             case 'local':
                 return [
@@ -117,23 +108,13 @@ export class MtaxSemanticTokensProvider implements vscode.DocumentSemanticTokens
             case 'global': {
                 const fn = this.api.fn(name);
                 if (fn) {
-                    const wrongSide = !this.api.isCallableFrom(fn, side);
-                    return [index('function'), bits('defaultLibrary', ...(wrongSide ? (['deprecated'] as const) : []))];
+                    if (side === 'shared' || this.api.isCallableFrom(fn, side)) return null;
+                    return [index('function'), bits('defaultLibrary', 'deprecated')];
                 }
 
-                const global = this.api.global(name);
-                if (global) return [index('variable'), bits('defaultLibrary', 'readonly')];
-
-                if (this.api.class(name) || this.api.staticClass(name) || isBundledType(name)) {
-                    return [index('class'), bits('defaultLibrary')];
-                }
-
-                if (LUA_STDLIB.has(name)) {
-                    return [
-                        index(STD_NAMESPACES.has(name) ? 'namespace' : 'function'),
-                        bits('defaultLibrary'),
-                    ];
-                }
+                if (this.api.global(name)) return null;
+                if (this.api.class(name) || this.api.staticClass(name) || isBundledType(name)) return null;
+                if (LUA_STDLIB.has(name)) return null;
 
                 return [index(binding?.isFunction ? 'function' : 'variable'), bits(...flags)];
             }

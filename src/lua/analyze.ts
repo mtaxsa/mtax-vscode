@@ -20,6 +20,7 @@ export interface Binding {
     signature: string | null;
     isFunction: boolean;
     isTable: boolean;
+    owner?: string | null;
 }
 
 export interface Occurrence {
@@ -52,6 +53,12 @@ export interface EventString {
     argIndex: number;
 }
 
+export interface MethodScope {
+    start: number;
+    end: number;
+    owner: string | null;
+}
+
 export interface Analysis {
     chunk: ast.Chunk;
     errors: ParseError[];
@@ -61,6 +68,7 @@ export interface Analysis {
     fields: Map<string, Binding>;
     occurrences: Occurrence[];
     symbols: SymbolNode[];
+    methods: MethodScope[];
     strings: EventString[];
 }
 
@@ -87,6 +95,7 @@ export function analyzeChunk(
     const occurrences: Occurrence[] = [];
     const symbols: SymbolNode[] = [];
     const strings: EventString[] = [];
+    const methods: MethodScope[] = [];
 
     let scope: Scope = { parent: null, bindings: new Map(), isFunction: true };
 
@@ -181,14 +190,26 @@ export function analyzeChunk(
         return local;
     };
 
+    const fieldPath = (node: ast.MemberExpression): string | null => {
+        const path = ast.memberPath(node);
+        if (!path) return null;
+        if (path[0] === 'self') {
+            const bound = resolve('self');
+            if (bound?.kind === 'self') {
+                if (!bound.owner) return path.join('.');
+                return [bound.owner, ...path.slice(1)].join('.');
+            }
+        }
+        return path.join('.');
+    };
+
     const useField = (
         node: ast.MemberExpression,
         write: boolean,
         called: boolean,
         options: { isFunction?: boolean; isTable?: boolean; signature?: string | null } = {},
     ): void => {
-        const path = ast.memberPath(node);
-        const key = path ? path.join('.') : null;
+        const key = fieldPath(node);
         let binding: Binding | null = null;
 
         if (key) {
@@ -240,9 +261,23 @@ export function analyzeChunk(
     const visitFunction = (func: ast.FunctionExpression): void => {
         push(true);
         if (func.isMethod) {
+            const name = func.name && func.name.type === 'MemberExpression' ? func.name : null;
+            const ownerPath = name ? ast.memberPath(name.base) : null;
+            const declaration: Reference | null = name
+                ? { start: name.identifier.start, end: name.identifier.end, write: true, declaration: true }
+                : null;
+            const owner = ownerPath ? ownerPath.join('.') : null;
+            methods.push({ start: func.start, end: func.end, owner });
             scope.bindings.set('self', {
-                name: 'self', kind: 'self', path: 'self',
-                declaration: null, references: [], signature: null, isFunction: false, isTable: false,
+                name: 'self',
+                kind: 'self',
+                path: 'self',
+                owner,
+                declaration,
+                references: [],
+                signature: null,
+                isFunction: false,
+                isTable: false,
             });
         }
         for (const param of func.params) {
@@ -436,7 +471,7 @@ export function analyzeChunk(
     buildSymbols(chunk, symbols, source);
 
     occurrences.sort((a, b) => a.start - b.start);
-    return { chunk, errors, comments, locals, globals, fields, occurrences, symbols, strings };
+    return { chunk, errors, comments, locals, globals, fields, occurrences, symbols, strings, methods };
 }
 
 function buildSymbols(chunk: ast.Chunk, out: SymbolNode[], source: string): void {
@@ -610,6 +645,17 @@ export function occurrenceAt(analysis: Analysis, offset: number): Occurrence | n
         else return o;
     }
     return null;
+}
+
+export function selfOwnerAt(analysis: Analysis, offset: number): string | null {
+    let owner: string | null = null;
+    let width = Infinity;
+    for (const method of analysis.methods) {
+        if (offset < method.start || offset > method.end) continue;
+        const span = method.end - method.start;
+        if (span < width) { width = span; owner = method.owner; }
+    }
+    return owner;
 }
 
 export function stringAt(analysis: Analysis, offset: number): EventString | null {

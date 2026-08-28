@@ -40,7 +40,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
             LUA,
-            new MtaxCompletionProvider(api, resources),
+            new MtaxCompletionProvider(api, resources, lua),
             '.', ':', '"', "'",
         ),
         vscode.languages.registerCompletionItemProvider(

@@ -155,6 +155,51 @@ test('dotted paths are tracked so table fields navigate', () => {
     assert.equal(reset.isFunction, true);
 });
 
+test('self knows the table it belongs to', () => {
+    const source = [
+        'local Class = {}',
+        'function Class:init()',
+        '    self.value = 1',
+        '    self:update()',
+        'end',
+        'function Class:update()',
+        '    print(self.value)',
+        'end',
+    ].join('\n');
+    const analysis = analyze(source);
+
+    const value = analysis.fields.get('Class.value');
+    assert.ok(value, 'self.value should resolve to Class.value');
+    assert.equal(value.references.length, 2);
+    assert.ok(!analysis.fields.has('self.value'), 'the raw self path must not survive');
+
+    const update = analysis.fields.get('Class.update');
+    assert.equal(update.references.length, 2);
+    assert.ok(update.declaration, 'the declaration is the `function Class:update` name');
+
+    const self = analysis.occurrences.find((o) => o.kind === 'self');
+    assert.ok(self.binding.declaration, 'self should have somewhere to go');
+    assert.equal(
+        source.slice(self.binding.declaration.start, self.binding.declaration.end),
+        'init',
+    );
+});
+
+test('self with no known owner stays file-local', () => {
+    const analysis = analyze('local t = {}\nt.go = function(self) return self.value end');
+    assert.ok(analysis.fields.has('self.value'), 'the path stays unqualified');
+});
+
+test('two classes do not share their self fields', () => {
+    const analysis = analyze([
+        'local A, B = {}, {}',
+        'function A:go() self.count = 1 end',
+        'function B:go() self.count = 2 end',
+    ].join('\n'));
+    assert.equal(analysis.fields.get('A.count').references.length, 1);
+    assert.equal(analysis.fields.get('B.count').references.length, 1);
+});
+
 test('occurrenceAt finds what the cursor is on', () => {
     const source = 'local vehicle = createVehicle(411, 0, 0, 5)';
     const analysis = analyze(source);

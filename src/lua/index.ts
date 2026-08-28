@@ -120,6 +120,7 @@ export class LuaIndex implements vscode.Disposable {
                 globals.set(name, list);
             }
             for (const [pathName, binding] of analysis.fields) {
+                if (pathName.startsWith('self.')) continue;
                 const list = fields.get(pathName) ?? [];
                 list.push({ fsPath, binding });
                 fields.set(pathName, list);

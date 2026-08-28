@@ -69,9 +69,17 @@ Names are coloured for what they are — native, event, OOP class, local, parame
 method, label — rather than all alike. A native called from the wrong side is marked
 `deprecated`, so the theme strikes it through before you even read the warning.
 
-This ships twice on purpose: as **semantic tokens** (precise, scope-aware) and as a
-**TextMate injection grammar** generated from the same data, which paints the API the moment
-the file opens and keeps working even when a theme has semantic highlighting switched off.
+Two layers share the work, and they do not overlap. A **TextMate injection grammar** generated
+from the API owns the MTAX identity — natives, engine globals, OOP classes and event names get
+their own `support.*.mtax.lua` scopes, which every theme already styles and which keep working
+with semantic highlighting switched off. **Semantic tokens** own what only scope analysis knows:
+local, parameter, property, method, label, and which occurrence is the declaration.
+
+The split matters, because a semantic token silently replaces the scope underneath it: claiming
+`self` would trade the Lua grammar's `variable.language` blue for a plain variable colour, and
+claiming a native would trade its MTAX scope for a generic function. So neither is claimed. The
+one deliberate override is a native called from the wrong side, emitted as `deprecated` so the
+theme strikes it through.
 
 ### The MTAX API
 
@@ -226,7 +234,7 @@ npm install
 npm run generate     # data/api.json + definitions/
 npm run compile      # bundle into dist/
 npm run watch        # rebuild on save
-npm test             # 61 tests: parser, scopes, manifest, API, grammar and end-to-end activation
+npm test             # 67 tests: parser, scopes, manifest, API, grammar and end-to-end activation
 npm run package      # produces the .vsix
 ```
 

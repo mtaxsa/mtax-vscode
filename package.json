@@ -2,7 +2,7 @@
   "name": "mtax-lua",
   "displayName": "MTAX — Lua Modding",
   "description": "Lua 5.4 language support for MTAX resources: parser-backed navigation, semantic highlighting, 1059 natives, 172 events, OOP API, manifest validation and resource scaffolding.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "mtaxsa",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -284,31 +284,18 @@
       {
         "language": "lua",
         "scopes": {
-          "function.defaultLibrary": [
-            "support.function.mtax.lua",
-            "support.function"
-          ],
-          "variable.defaultLibrary": [
-            "support.constant.mtax.lua",
-            "support.variable"
-          ],
-          "class.defaultLibrary": [
-            "support.class.mtax.lua",
-            "support.class"
-          ],
-          "event": [
-            "support.constant.event.mtax.lua",
-            "constant.language"
-          ],
-          "method.defaultLibrary": [
-            "support.function.mtax.lua",
-            "entity.name.function"
-          ],
           "property": [
             "variable.other.property"
           ],
           "parameter": [
             "variable.parameter"
+          ],
+          "method": [
+            "entity.name.function"
+          ],
+          "event": [
+            "support.constant.event.mtax.lua",
+            "constant.language"
           ]
         }
       }

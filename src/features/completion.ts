@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 
 import { Api, ApiFunction, OopClass, Side } from '../api/model';
 import { ResourceIndex } from '../manifest/resource';
+import { LuaIndex } from '../lua/index';
+import { selfOwnerAt } from '../lua/analyze';
 import { scanLua, callContextAt, identifierAt, stringAt } from '../util/lua';
 import { docsLanguage, functionDoc, eventDoc, methodDoc, propertyDoc, sideLabel, nativeParamNames } from './docs';
 import { MANIFEST_NAME } from '../manifest/resource';
@@ -9,7 +11,11 @@ import { MANIFEST_NAME } from '../manifest/resource';
 const SIDE_ICON: Record<Side, string> = { client: '🖥️', server: '🗄️', shared: '🔗' };
 
 export class MtaxCompletionProvider implements vscode.CompletionItemProvider {
-    constructor(private readonly api: Api, private readonly resources: ResourceIndex) {}
+    constructor(
+        private readonly api: Api,
+        private readonly resources: ResourceIndex,
+        private readonly lua: LuaIndex,
+    ) {}
 
     provideCompletionItems(
         document: vscode.TextDocument,
@@ -35,7 +41,13 @@ export class MtaxCompletionProvider implements vscode.CompletionItemProvider {
         const beforeCursor = scan.masked.slice(Math.max(0, offset - 200), offset);
         const memberMatch = beforeCursor.match(/([A-Za-z_][A-Za-z0-9_.]*)\s*([.:])\s*([A-Za-z0-9_]*)$/);
         if (memberMatch) {
-            return this.memberCompletions(memberMatch[1], memberMatch[2] as ':' | '.', document, lang);
+            return this.memberCompletions(
+                memberMatch[1],
+                memberMatch[2] as ':' | '.',
+                document,
+                lang,
+                offset,
+            );
         }
 
         const { side } = this.resources.resolveSide(document.uri.fsPath);
@@ -111,10 +123,19 @@ export class MtaxCompletionProvider implements vscode.CompletionItemProvider {
         accessor: ':' | '.',
         document: vscode.TextDocument,
         lang: 'en' | 'pt',
+        offset: number,
     ): vscode.CompletionItem[] | undefined {
-        if (!vscode.workspace.getConfiguration('mtax').get<boolean>('completion.oop', true)) return undefined;
-
         const items: vscode.CompletionItem[] = [];
+
+        const owner = receiver === 'self'
+            ? selfOwnerAt(this.lua.forDocument(document), offset)
+            : receiver;
+        if (owner) items.push(...this.userMembers(document, owner, accessor));
+
+        if (!vscode.workspace.getConfiguration('mtax').get<boolean>('completion.oop', true)) {
+            return items.length ? items : undefined;
+        }
+
         const { side } = this.resources.resolveSide(document.uri.fsPath);
 
         if (receiver.startsWith('exports.')) {
@@ -176,6 +197,43 @@ export class MtaxCompletionProvider implements vscode.CompletionItemProvider {
             }
         }
         return items;
+    }
+
+    private userMembers(
+        document: vscode.TextDocument,
+        owner: string,
+        accessor: ':' | '.',
+    ): vscode.CompletionItem[] {
+        const scope = this.lua.scopeFor(document.uri.fsPath);
+        if (!scope) return [];
+
+        const prefix = `${owner}.`;
+        const out: vscode.CompletionItem[] = [];
+        const seen = new Set<string>();
+
+        for (const [path, sites] of scope.fields) {
+            if (!path.startsWith(prefix)) continue;
+            const rest = path.slice(prefix.length);
+            if (!rest || rest.includes('.') || seen.has(rest)) continue;
+
+            const defined = sites.find((s) => s.binding.declaration) ?? sites[0];
+            const isFunction = sites.some((s) => s.binding.isFunction);
+            if (accessor === ':' && !isFunction) continue;
+            seen.add(rest);
+
+            const item = new vscode.CompletionItem(
+                rest,
+                isFunction ? vscode.CompletionItemKind.Method : vscode.CompletionItemKind.Field,
+            );
+            item.detail = `${owner}.${rest}${defined.binding.signature ? ` ${defined.binding.signature}` : ''}`;
+            item.documentation = new vscode.MarkdownString(
+                `Defined in this resource — \`${path}\`${isFunction ? '' : ''}`,
+            );
+            item.sortText = `0${rest}`;
+            if (isFunction) item.insertText = new vscode.SnippetString(`${rest}($0)`);
+            out.push(item);
+        }
+        return out;
     }
 
     private pushClassMembers(

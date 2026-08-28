@@ -184,7 +184,14 @@ Module._load = function load(request, parent, isMain) {
 };
 
 const require = Module.createRequire(import.meta.url);
-const extension = require(path.join(ROOT, 'dist', 'extension.js'));
+const bundle = path.join(ROOT, 'dist', 'extension.js');
+if (!fs.existsSync(bundle)) {
+    throw new Error(
+        `${bundle} is missing. These tests drive the real bundle — run "npm run compile" first, `
+        + 'or "npm test", which builds it for you.',
+    );
+}
+const extension = require(bundle);
 
 const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mtax-test-'));
 const resourceRoot = path.join(workspace, 'my-resource');

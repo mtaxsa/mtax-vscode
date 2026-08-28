@@ -1,0 +1,176 @@
+{
+  "Event handler": {
+    "prefix": "aeh",
+    "body": [
+      "addEventHandler(\"${1:onPlayerJoin}\", ${2:root}, function(${3})",
+      "\t$0",
+      "end)"
+    ],
+    "description": "addEventHandler with an inline function"
+  },
+  "Named event handler": {
+    "prefix": "aehn",
+    "body": [
+      "local function ${1:onJoin}(${2})",
+      "\t$0",
+      "end",
+      "",
+      "addEventHandler(\"${3:onPlayerJoin}\", ${4:root}, ${1:onJoin})"
+    ],
+    "description": "A handler kept in a variable, so removeEventHandler can find it later"
+  },
+  "Custom event": {
+    "prefix": "aevent",
+    "body": [
+      "addEvent(\"${1:myEvent}\", ${2|true,false|})",
+      "addEventHandler(\"${1:myEvent}\", ${3:root}, function(${4})",
+      "\t$0",
+      "end)"
+    ],
+    "description": "Declare a custom event and handle it. The flag allows remote triggering."
+  },
+  "Command handler": {
+    "prefix": "cmd",
+    "body": [
+      "addCommandHandler(\"${1:mycommand}\", function(${2:player}, command, ${3:...})",
+      "\t$0",
+      "end)"
+    ],
+    "description": "addCommandHandler"
+  },
+  "Timer": {
+    "prefix": "timer",
+    "body": [
+      "setTimer(function()",
+      "\t$0",
+      "end, ${1:1000}, ${2:1})"
+    ],
+    "description": "setTimer — interval in ms, then how many times (0 repeats forever)"
+  },
+  "Render loop": {
+    "prefix": "render",
+    "body": [
+      "addEventHandler(\"onClientRender\", root, function()",
+      "\t$0",
+      "end)"
+    ],
+    "description": "Client render loop — runs every frame"
+  },
+  "Resource start": {
+    "prefix": "onstart",
+    "body": [
+      "addEventHandler(\"${1|onResourceStart,onClientResourceStart|}\", resourceRoot, function()",
+      "\t$0",
+      "end)"
+    ],
+    "description": "Runs once when this resource starts"
+  },
+  "Server → client": {
+    "prefix": "tce",
+    "body": [
+      "triggerClientEvent(${1:player}, \"${2:myEvent}\", ${3:resourceRoot}${4:, value})"
+    ],
+    "description": "triggerClientEvent"
+  },
+  "Client → server": {
+    "prefix": "tse",
+    "body": [
+      "triggerServerEvent(\"${1:myEvent}\", ${2:resourceRoot}${3:, value})"
+    ],
+    "description": "triggerServerEvent"
+  },
+  "Remote handler (validate the client)": {
+    "prefix": "remote",
+    "body": [
+      "addEvent(\"${1:myEvent}\", true)",
+      "addEventHandler(\"${1:myEvent}\", root, function(${2})",
+      "\tif not client or not isElement(client) then return end",
+      "\t$0",
+      "end)"
+    ],
+    "description": "A server handler for a client-triggered event, with the client check that keeps it honest"
+  },
+  "dxDrawText": {
+    "prefix": "dxtext",
+    "body": [
+      "dxDrawText(${1:text}, ${2:x}, ${3:y}, ${4:right}, ${5:bottom}, tocolor(${6:255}, ${7:255}, ${8:255}, ${9:255}), ${10:1}, \"${11|default,default-bold,clear,arial,sans,pricedown,bankgothic,diploma,beckett|}\", \"${12|left,center,right|}\", \"${13|top,center,bottom|}\")"
+    ],
+    "description": "dxDrawText with every argument spelled out"
+  },
+  "dxDrawRectangle": {
+    "prefix": "dxrect",
+    "body": [
+      "dxDrawRectangle(${1:x}, ${2:y}, ${3:width}, ${4:height}, tocolor(${5:0}, ${6:0}, ${7:0}, ${8:180}))"
+    ],
+    "description": "dxDrawRectangle"
+  },
+  "Screen size": {
+    "prefix": "screen",
+    "body": [
+      "local screenW, screenH = guiGetScreenSize()"
+    ],
+    "description": "Read the screen resolution"
+  },
+  "Database query": {
+    "prefix": "dbq",
+    "body": [
+      "dbQuery(function(handle)",
+      "\tlocal rows = dbPoll(handle, 0)",
+      "\tif not rows then return end",
+      "\t$0",
+      "end, ${1:connection}, \"${2:SELECT * FROM table WHERE id = ?}\", ${3:id})"
+    ],
+    "description": "Asynchronous dbQuery with the callback form of dbPoll"
+  },
+  "Exported call": {
+    "prefix": "exp",
+    "body": [
+      "exports.${1:resource}:${2:functionName}(${3})"
+    ],
+    "description": "Call another resource's exported function — always with ':'"
+  },
+  "Element data": {
+    "prefix": "edata",
+    "body": [
+      "setElementData(${1:element}, \"${2:key}\", ${3:value})"
+    ],
+    "description": "setElementData"
+  },
+  "Colshape hit": {
+    "prefix": "colhit",
+    "body": [
+      "addEventHandler(\"onColShapeHit\", ${1:shape}, function(hitElement, matchingDimension)",
+      "\tif not matchingDimension or getElementType(hitElement) ~= \"player\" then return end",
+      "\t$0",
+      "end)"
+    ],
+    "description": "onColShapeHit, filtered down to players in the same dimension"
+  },
+  "NUI callback": {
+    "prefix": "nuicb",
+    "body": [
+      "registerNuiCallback(\"${1:name}\", function(${2:data})",
+      "\t$0",
+      "end)"
+    ],
+    "description": "registerNuiCallback"
+  },
+  "Manifest": {
+    "prefix": "manifest",
+    "body": [
+      "resource_name    = \"${1:my-resource}\"",
+      "resource_version = \"${2:1.0.0}\"",
+      "resource_author  = \"${3:me}\"",
+      "",
+      "server_files = {",
+      "\t\"server/main.lua\",",
+      "}",
+      "",
+      "client_files = {",
+      "\t\"client/main.lua\",",
+      "}",
+      "$0"
+    ],
+    "description": "A full mtaxmanifest.lua"
+  }
+}

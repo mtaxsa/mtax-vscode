@@ -1,0 +1,268 @@
+{
+  "name": "mtax-lua",
+  "displayName": "MTAX — Lua Modding",
+  "description": "Lua 5.4 tooling for MTAX resources: 1059 natives, 172 events, OOP API, manifest validation and resource scaffolding.",
+  "version": "0.1.0",
+  "publisher": "mtaxsa",
+  "license": "SEE LICENSE IN LICENSE",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "mtax",
+    "mta",
+    "lua",
+    "gta",
+    "san andreas",
+    "multiplayer"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mtaxsa/mtax-vscode"
+  },
+  "activationEvents": [
+    "onLanguage:lua",
+    "workspaceContains:**/mtaxmanifest.lua"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mtax.newResource",
+        "title": "New Resource…",
+        "category": "MTAX"
+      },
+      {
+        "command": "mtax.newScript",
+        "title": "New Script (adds it to the manifest)…",
+        "category": "MTAX"
+      },
+      {
+        "command": "mtax.searchApi",
+        "title": "Search the API…",
+        "category": "MTAX"
+      },
+      {
+        "command": "mtax.openDocs",
+        "title": "Open documentation for the symbol at the cursor",
+        "category": "MTAX"
+      },
+      {
+        "command": "mtax.setupLuaLs",
+        "title": "Set up lua-language-server for this workspace",
+        "category": "MTAX"
+      },
+      {
+        "command": "mtax.convertMetaXml",
+        "title": "Convert meta.xml to mtaxmanifest.lua",
+        "category": "MTAX"
+      },
+      {
+        "command": "mtax.regenerateApi",
+        "title": "Regenerate the API from local MTAX sources (developers)",
+        "category": "MTAX"
+      },
+      {
+        "command": "mtax.pickSide",
+        "title": "Set the side of the current file (client / server / shared)",
+        "category": "MTAX"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "mtax.newResource",
+          "when": "explorerResourceIsFolder",
+          "group": "navigation@20"
+        },
+        {
+          "command": "mtax.convertMetaXml",
+          "when": "resourceFilename == meta.xml",
+          "group": "navigation@21"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "mtax.openDocs",
+          "when": "editorLangId == lua",
+          "group": "navigation@10"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "mtax.openDocs",
+        "key": "ctrl+alt+d",
+        "mac": "cmd+alt+d",
+        "when": "editorLangId == lua"
+      },
+      {
+        "command": "mtax.searchApi",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "editorLangId == lua"
+      }
+    ],
+    "configuration": {
+      "title": "MTAX",
+      "properties": {
+        "mtax.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Turn the whole MTAX language layer on or off."
+        },
+        "mtax.docsLanguage": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "en",
+            "pt"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Follow the VS Code display language, falling back to English.",
+            "English.",
+            "Português."
+          ],
+          "description": "Language used for hovers, completion details and signature help."
+        },
+        "mtax.diagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report MTAX problems in Lua files."
+        },
+        "mtax.diagnostics.wrongSide": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "information",
+            "off"
+          ],
+          "default": "warning",
+          "description": "Severity for calling a server-only native from a client script, and the other way round."
+        },
+        "mtax.diagnostics.sharedSideCalls": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "information",
+            "off"
+          ],
+          "default": "off",
+          "description": "Severity for a one-sided native called from a shared script. Off by default: a shared script usually branches on localPlayer and calls each side from its own half."
+        },
+        "mtax.diagnostics.typos": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "information",
+            "off"
+          ],
+          "default": "warning",
+          "description": "Severity for a called global that is one or two characters away from a real native (setElemenPosition → setElementPosition)."
+        },
+        "mtax.diagnostics.unknownNative": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "information",
+            "off"
+          ],
+          "default": "warning",
+          "description": "Severity for calling a function that is shaped like a native (outputChatBox, guiGetText, getPlayerMoney) but does not exist in MTAX and is defined nowhere in the resource. This is what a resource ported from MTA usually trips on."
+        },
+        "mtax.diagnostics.sandbox": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "information",
+            "off"
+          ],
+          "default": "error",
+          "description": "Severity for globals and libraries the MTAX sandbox removes (require, dofile, io, package, os.execute…)."
+        },
+        "mtax.diagnostics.manifest": {
+          "type": "boolean",
+          "default": true,
+          "description": "Validate mtaxmanifest.lua the way the server does: path rules, the script/asset split, ui_page, exports."
+        },
+        "mtax.diagnostics.deprecatedMeta": {
+          "type": "boolean",
+          "default": true,
+          "description": "Point out meta.xml files sitting in a resource folder and offer to convert them."
+        },
+        "mtax.completion.oop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Suggest the OOP API (Element, Player, Vehicle…) alongside the plain natives."
+        },
+        "mtax.completion.snippets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Expand a native into a call with its arguments filled in as tab stops."
+        },
+        "mtax.luals.autoConfigure": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "default": "ask",
+          "description": "Point lua-language-server at the bundled MTAX definitions when an MTAX workspace is opened."
+        },
+        "mtax.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show which side the current file runs on in the status bar."
+        },
+        "mtax.sourceRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Folder holding MTAX-Purple/ and wiki/, used by \"Regenerate the API from local MTAX sources\". Leave empty to search upwards from the workspace."
+        },
+        "mtax.author": {
+          "type": "string",
+          "default": "",
+          "description": "Name written to resource_author when a new resource is scaffolded. Empty falls back to the OS user name."
+        }
+      }
+    },
+    "snippets": [
+      {
+        "language": "lua",
+        "path": "./snippets/lua.json"
+      }
+    ],
+    "problemMatchers": [],
+    "jsonValidation": []
+  },
+  "scripts": {
+    "generate": "node tools/generate-api.mjs",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "build": "npm run generate && node esbuild.mjs --production",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && vsce package --no-dependencies",
+    "test": "node --test \"tests/**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}

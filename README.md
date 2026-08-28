@@ -18,13 +18,21 @@
 
 ---
 
-This extension knows the **1,059 native functions**, the **172 events**, the **OOP API**
-(26 classes plus 14 static classes), the **sandbox** and the `mtaxmanifest.lua` format —
-all extracted straight from the engine source and the wiki, never typed by hand.
+Two layers sit behind everything here.
+
+A **Lua 5.4 parser with scope resolution**, written for this extension, drives navigation,
+the outline, rename and semantic highlighting — so clicking a name finds the *binding*, not
+other text that happens to match.
+
+An **API snapshot** knows the **1,059 native functions**, the **172 events**, the **OOP API**
+(26 classes plus 14 static classes), the **sandbox** and the `mtaxmanifest.lua` format — all
+extracted straight from the engine source and the wiki, never typed by hand.
 
 ## Table of contents
 
 - [Features](#features)
+  - [Language support](#language-support)
+  - [The MTAX API](#the-mtax-api)
 - [Commands](#commands)
 - [lua-language-server](#lua-language-server-optional)
 - [Configuration](#configuration)
@@ -36,7 +44,38 @@ all extracted straight from the engine source and the wiki, never typed by hand.
 
 ## Features
 
-### Completion that knows which side the file runs on
+### Language support
+
+Everything a Lua editor is expected to do, answered from the syntax tree:
+
+| | |
+| --- | --- |
+| **Go to definition** `F12` | A local jumps to its own declaration — the one actually in scope, so `local x = x` resolves the two `x` apart. A global or a table field jumps to wherever the resource assigns it, in any of its files. A native jumps to its signature in the generated definitions. |
+| **Find all references** `Shift+F12` | Every use across the resource. Works on locals, globals, table fields, natives and event names. |
+| **Rename** `F2` | Locals within their scope, globals and fields across the resource. Renaming the MTAX API is refused. |
+| **Outline / breadcrumbs** `Ctrl+Shift+O` | Functions, methods, tables and their fields — including what sits inside a top-level `if ... then`, which is where half of a typical resource lives. |
+| **Workspace symbols** `Ctrl+T` | Search across every resource in the folder. |
+| **Highlight occurrences** | Every read and write of the name under the cursor, writes marked apart. |
+| **Syntax errors** | Reported as you type, with recovery: an unfinished `if` at the bottom of the file does not cost you the outline of everything above it. |
+
+**Scope stops at the resource.** Each MTAX resource runs in its own Lua VM, so a global
+defined in resource A genuinely does not exist in resource B — and navigation refuses to
+jump across that line, unlike a general-purpose Lua server that would treat the whole folder
+as one scope.
+
+### Colour
+
+Names are coloured for what they are — native, event, OOP class, local, parameter, property,
+method, label — rather than all alike. A native called from the wrong side is marked
+`deprecated`, so the theme strikes it through before you even read the warning.
+
+This ships twice on purpose: as **semantic tokens** (precise, scope-aware) and as a
+**TextMate injection grammar** generated from the same data, which paints the API the moment
+the file opens and keeps working even when a theme has semantic highlighting switched off.
+
+### The MTAX API
+
+#### Completion that knows which side the file runs on
 
 As you type in a script, natives show up with their signature, description and example.
 The ones that **do not exist** on that side are still offered — flagged with
@@ -48,14 +87,14 @@ With no manifest, the extension infers it from the folder (`server/`, `client/`)
 file name (`main_s.lua`, `_c.lua`), and the status bar reads `MTAX server?` — the question mark
 telling you it was a guess. Clicking the status bar pins the side by hand.
 
-### Event names where event names belong
+#### Event names where event names belong
 
 Inside the `eventName` argument of `addEventHandler`, `triggerClientEvent`, `triggerServerEvent`
 and friends, completion swaps the natives for **events** — along with the parameters the handler
 will receive, the `source` element and whether the event can be cancelled. Events the resource
 registers itself with `addEvent("...")` join the list.
 
-### Hover and signature help
+#### Hover and signature help
 
 Hovering shows the signature, parameters with type and default, the return value, the OOP
 equivalent and a link to the wiki. While you type the arguments, the current parameter is
@@ -65,7 +104,7 @@ variant for the current side is the one already selected.
 All of it in **English or Portuguese**, following the VS Code display language or the
 `mtax.docsLanguage` setting.
 
-### Problems the server would reject
+#### Problems the server would reject
 
 | Problem | Example |
 | --- | --- |
@@ -74,6 +113,7 @@ All of it in **English or Portuguese**, following the VS Code display language o
 | Typo | `setElemenPosition` → *did you mean `setElementPosition`?* |
 | Event from the wrong side | `onClientRender` registered in a server script |
 | Sandbox | `require`, `dofile`, `io.open`, `package`, `debug`, `os.execute` |
+| Syntax error | anything the parser cannot read, at the exact token |
 | Script missing from the manifest | a `.lua` in the folder that no list declares — it will never run |
 
 Every rule carries its own severity and can be turned off. The ones worth fixing
@@ -84,7 +124,7 @@ automatically offer a quick fix (`Ctrl+.`).
 > One-sided calls inside a `shared` script are off by default, because a shared script tends to
 > branch on `localPlayer` and call both sides on purpose.
 
-### A real `mtaxmanifest.lua`
+#### A real `mtaxmanifest.lua`
 
 The manifest is validated with the **same rules the server uses**
 (`Server/src/modules/resources/manifest.cpp`):
@@ -135,7 +175,9 @@ None of this is required: without sumneko, the extension works on its own.
 | --- | --- | --- |
 | `mtax.enable` | `true` | Turns the whole language layer on or off |
 | `mtax.docsLanguage` | `auto` | `auto`, `en` or `pt` in hovers and completion |
+| `mtax.semanticHighlighting` | `true` | Colour names for what they are, not all alike |
 | `mtax.diagnostics.enable` | `true` | Turns problem reporting on |
+| `mtax.diagnostics.syntax` | `error` | Lua syntax errors from the built-in parser |
 | `mtax.diagnostics.wrongSide` | `warning` | Native from one side called from the other |
 | `mtax.diagnostics.sharedSideCalls` | `off` | The same, but inside a `shared` script |
 | `mtax.diagnostics.unknownNative` | `warning` | Function shaped like a native that does not exist in MTAX |
@@ -152,7 +194,7 @@ None of this is required: without sumneko, the extension works on its own.
 
 ## Where the data comes from
 
-`data/api.json` and `definitions/*.lua` are **generated**, never edited by hand:
+`data/api.json`, `definitions/*.lua` and `syntaxes/*.json` are **generated**, never edited by hand:
 
 | Source | What comes out of it |
 | --- | --- |
@@ -162,6 +204,9 @@ None of this is required: without sumneko, the extension works on its own.
 | `Shared/src/lua_api/prelude/prelude.h` | pure-Lua helpers (`bit*`, `utf*`, `split`, `inspect`, `ref`…) |
 | `Server/src/modules/resources/manifest.cpp` | the manifest keys and the validation rules |
 | `wiki/src/content/docs/{en,pt}` | descriptions, signatures, parameters, returns, examples and events |
+
+Out of those come the API snapshot the extension reads at runtime, the LuaCATS definition
+files, and the TextMate injection grammars that colour the API.
 
 To regenerate after changing the engine or the wiki:
 
@@ -181,30 +226,40 @@ npm install
 npm run generate     # data/api.json + definitions/
 npm run compile      # bundle into dist/
 npm run watch        # rebuild on save
-npm test             # 35 tests: scanner, manifest, API and end-to-end activation
+npm test             # 61 tests: parser, scopes, manifest, API, grammar and end-to-end activation
 npm run package      # produces the .vsix
 ```
 
 `F5` in VS Code opens a window with the extension loaded.
 
-The tests run against the real bundle with a stub of the VS Code API, so a hang on activation or
-a broken provider shows up before packaging.
+The tests run against the real bundle with a stub of the VS Code API, so a hang on activation or a
+broken provider shows up before packaging. The colouring is checked against the actual TextMate
+engine layered over VS Code's own Lua grammar, because an injection selector is easy to get
+subtly wrong and impossible to eyeball.
 
 ### Project layout
 
 ```
-tools/generate-api.mjs     reads engine + wiki, writes data/ and definitions/
-src/api/model.ts           loads and indexes the snapshot
-src/util/lua.ts            Lua 5.4 scanner (masks comments and strings)
-src/manifest/              parsing, path rules, globs, side, resource symbols
+tools/generate-api.mjs     reads engine + wiki, writes data/, definitions/ and syntaxes/
+src/lua/lexer.ts           Lua 5.4 tokens, long brackets, escapes, BOM and shebang
+src/lua/parser.ts          error-tolerant recursive descent -> syntax tree
+src/lua/analyze.ts         scopes, bindings, references, dotted paths, the outline
+src/lua/index.ts           per-file and per-resource caches
+src/api/model.ts           loads and indexes the API snapshot
+src/manifest/              parsing, path rules, globs, side resolution
 src/features/              completion, hover, signature help, diagnostics, quick fixes,
-                           links, status bar, commands, scaffolding, luals
+                           navigation, semantic tokens, links, status bar, commands,
+                           scaffolding, luals
 ```
 
-The scanner produces a *masked* copy of the document — same length, same lines, with comments and
-string contents replaced by spaces. Everything else works on that copy, so no rule mistakes
-`-- createVehicle(411)` for a call, and the offsets still point into the real document.
+The parser never throws. A file is re-read on every keystroke, so half-typed code is the normal
+case: what it cannot understand is recorded, the token is skipped, and the walk continues — an
+unfinished `if` at the bottom of a file does not cost you the outline of everything above it.
+
+It is checked against the real thing: 618 Lua files from the server's own `resources/` folder,
+6.6 MB, parse with **zero** errors — the only three failures are MTXA-protected script
+containers, which are not Lua at all.
 
 ## License
 
-Released under the [MIT License](LICENSE). Copyright (c) 2026 CMR Services.
+Property of CMR Services — see [LICENSE](LICENSE). Copyright (c) 2026 CMR Services.

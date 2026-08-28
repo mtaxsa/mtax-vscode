@@ -8,8 +8,8 @@ import {
     parseManifest, isSafeRelativePath, isLuaPath, isCrossResourceEntry,
     splitCrossResourceEntry, hasGlob, globMatches, SCRIPT_LIST_KEYS, FILE_LIST_KEY_NAMES,
 } from '../manifest/parse';
-import { scanLua, findCalls, findIdentifiers, declaredNames, editDistance } from '../util/lua';
-import { symbolsOf, clearSymbolCache, ResourceSymbols } from '../manifest/symbols';
+import { editDistance } from '../util/lua';
+import { LuaIndex } from '../lua/index';
 import { isManifest } from './completion';
 
 export const SOURCE = 'mtax';
@@ -21,6 +21,7 @@ export const CODE = {
     sandboxOsField: 'sandbox-os-field',
     typo: 'typo',
     unknownNative: 'unknown-native',
+    syntax: 'syntax',
     eventTypo: 'event-typo',
     eventSide: 'event-side',
     undeclaredFile: 'undeclared-file',
@@ -61,7 +62,11 @@ export class MtaxDiagnostics implements vscode.Disposable {
     private readonly timers = new Map<string, NodeJS.Timeout>();
     private readonly disposables: vscode.Disposable[] = [];
 
-    constructor(private readonly api: Api, private readonly resources: ResourceIndex) {
+    constructor(
+        private readonly api: Api,
+        private readonly resources: ResourceIndex,
+        private readonly lua: LuaIndex,
+    ) {
         this.disposables.push(
             vscode.workspace.onDidChangeTextDocument((e) => this.schedule(e.document)),
             vscode.workspace.onDidOpenTextDocument((doc) => this.refresh(doc)),
@@ -69,7 +74,7 @@ export class MtaxDiagnostics implements vscode.Disposable {
             vscode.workspace.onDidChangeConfiguration((e) => {
                 if (e.affectsConfiguration('mtax')) this.refreshAll();
             }),
-            this.resources.onDidChange(() => { clearSymbolCache(); this.refreshAll(); }),
+            this.resources.onDidChange(() => this.refreshAll()),
         );
         this.refreshAll();
     }
@@ -92,6 +97,12 @@ export class MtaxDiagnostics implements vscode.Disposable {
         this.timers.set(key, setTimeout(() => {
             this.timers.delete(key);
             this.refresh(document);
+            const root = this.resources.findResourceRoot(document.uri.fsPath);
+            if (!root) return;
+            for (const other of vscode.workspace.textDocuments) {
+                if (other === document || other.languageId !== 'lua' || other.uri.scheme !== 'file') continue;
+                if (this.resources.findResourceRoot(other.uri.fsPath) === root) this.refresh(other);
+            }
         }, 300));
     }
 
@@ -114,176 +125,178 @@ export class MtaxDiagnostics implements vscode.Disposable {
         config: vscode.WorkspaceConfiguration,
     ): vscode.Diagnostic[] {
         const out: vscode.Diagnostic[] = [];
-        const text = document.getText();
-        const scan = scanLua(text);
-        const masked = scan.masked;
+        const analysis = this.lua.forDocument(document);
+        const scope = this.lua.scopeFor(document.uri.fsPath);
         const { side, certain, reason } = this.resources.resolveSide(document.uri.fsPath);
+
         const range = (start: number, end: number) =>
             new vscode.Range(document.positionAt(start), document.positionAt(end));
+        const push = (r: vscode.Range, message: string, code: string, sev: vscode.DiagnosticSeverity) => {
+            const d = new vscode.Diagnostic(r, message, sev);
+            d.source = SOURCE;
+            d.code = code;
+            out.push(d);
+        };
 
         const sandboxSeverity = severity(config.get<string>('diagnostics.sandbox'));
         const typoSeverity = severity(config.get<string>('diagnostics.typos'));
         const unknownSeverity = severity(config.get<string>('diagnostics.unknownNative'));
+        const syntaxSeverity = severity(config.get<string>('diagnostics.syntax'));
         const sideSeverity = severity(config.get<string>(
             side === 'shared' ? 'diagnostics.sharedSideCalls' : 'diagnostics.wrongSide',
         ));
 
-        const declared = declaredNames(masked);
-        const symbols = this.symbolsFor(document.uri.fsPath);
-        const calls = findCalls(masked);
+        if (syntaxSeverity !== null) {
+            for (const error of analysis.errors.slice(0, 50)) {
+                push(range(error.start, error.end), error.message, CODE.syntax, syntaxSeverity);
+            }
+        }
 
-        for (const call of calls) {
-            if (call.accessor) continue;
-            const fn = this.api.fn(call.name);
+        const definedInResource = (name: string): boolean =>
+            (scope?.globals.get(name) ?? []).some((site) => site.binding.declaration !== null);
+
+        for (const occurrence of analysis.occurrences) {
+            if (occurrence.kind === 'property' || occurrence.kind === 'method') {
+                const memberPath = occurrence.binding?.path;
+                if (!memberPath || sandboxSeverity === null) continue;
+                const dot = memberPath.indexOf('.');
+                if (dot === -1) continue;
+                const receiver = memberPath.slice(0, dot);
+                const field = memberPath.slice(dot + 1);
+                if (field.includes('.')) continue;
+
+                if ((receiver === 'io' || receiver === 'package' || receiver === 'debug')
+                    && !definedInResource(receiver)) {
+                    push(
+                        range(occurrence.start, occurrence.end),
+                        `The ${receiver} library does not exist in MTAX scripts.`
+                        + (receiver === 'io' ? ' Use the MTAX file functions (fileOpen, fileRead, fileWrite).' : ''),
+                        CODE.sandboxLibrary,
+                        sandboxSeverity,
+                    );
+                } else if (receiver === 'os' && this.restrictedOsFields().has(field) && !definedInResource('os')) {
+                    push(
+                        range(occurrence.start, occurrence.end),
+                        `os.${field} is removed by the MTAX sandbox. `
+                        + 'Only os.time, os.date, os.clock and os.difftime are available.',
+                        CODE.sandboxOsField,
+                        sandboxSeverity,
+                    );
+                }
+                continue;
+            }
+
+            if (occurrence.kind !== 'global') continue;
+            const name = occurrence.name;
+            const fn = this.api.fn(name);
 
             if (fn) {
                 if (sideSeverity !== null && !this.api.isCallableFrom(fn, side)) {
                     const where = side === 'shared'
                         ? `This script is shared, so it also runs on the ${fn.side === 'client' ? 'server' : 'client'}`
                         : `This script runs on the ${side}`;
-                    const d = new vscode.Diagnostic(
-                        range(call.start, call.end),
-                        `${where} (${reason}${certain ? '' : ', guessed'}), and ${fn.name} only exists on the ${fn.side}.`,
+                    push(
+                        range(occurrence.start, occurrence.end),
+                        `${where} (${reason}${certain ? '' : ', guessed'}), and ${name} only exists on the ${fn.side}.`,
+                        CODE.wrongSide,
                         sideSeverity,
                     );
-                    d.source = SOURCE;
-                    d.code = CODE.wrongSide;
-                    out.push(d);
                 }
                 continue;
             }
 
-            if (sandboxSeverity !== null && this.removedGlobals().has(call.name)) {
-                const d = new vscode.Diagnostic(
-                    range(call.start, call.end),
-                    `${call.name} does not exist: the MTAX sandbox removes it. ${this.sandboxAdvice(call.name)}`,
+            if (sandboxSeverity !== null && this.removedGlobals().has(name) && !definedInResource(name)) {
+                push(
+                    range(occurrence.start, occurrence.end),
+                    `${name} does not exist: the MTAX sandbox removes it. ${this.sandboxAdvice(name)}`.trim(),
+                    CODE.sandboxGlobal,
                     sandboxSeverity,
                 );
-                d.source = SOURCE;
-                d.code = CODE.sandboxGlobal;
-                out.push(d);
                 continue;
             }
 
-            const resolvable = declared.has(call.name) || LUA_STDLIB.has(call.name)
-                || symbols?.names.has(call.name) || this.api.global(call.name)
-                || this.api.class(call.name) || this.api.staticClass(call.name);
-            if (resolvable) continue;
+            if (!occurrence.called || occurrence.write) continue;
+            if (LUA_STDLIB.has(name) || this.api.global(name) || this.api.class(name)
+                || this.api.staticClass(name) || definedInResource(name)) continue;
 
-            const suggestion = typoSeverity !== null || unknownSeverity !== null
-                ? this.nearestNative(call.name)
+            const suggestion = (typoSeverity !== null || unknownSeverity !== null) && name.length >= 5
+                ? this.nearestNative(name)
                 : undefined;
 
             if (typoSeverity !== null && suggestion) {
-                const d = new vscode.Diagnostic(
-                    range(call.start, call.end),
-                    `${call.name} is not an MTAX native. Did you mean ${suggestion}?`,
+                push(
+                    range(occurrence.start, occurrence.end),
+                    `${name} is not an MTAX native. Did you mean ${suggestion}?`,
+                    CODE.typo,
                     typoSeverity,
                 );
-                d.source = SOURCE;
-                d.code = CODE.typo;
-                out.push(d);
                 continue;
             }
 
-            if (unknownSeverity !== null && !suggestion && !symbols?.borrows && looksLikeNative(call.name)) {
-                const d = new vscode.Diagnostic(
-                    range(call.start, call.end),
-                    `${call.name} does not exist in MTAX and nothing in this resource defines it.`,
+            if (unknownSeverity !== null && !suggestion && !this.borrows(document.uri.fsPath) && looksLikeNative(name)) {
+                push(
+                    range(occurrence.start, occurrence.end),
+                    `${name} does not exist in MTAX and nothing in this resource defines it.`,
+                    CODE.unknownNative,
                     unknownSeverity,
                 );
-                d.source = SOURCE;
-                d.code = CODE.unknownNative;
-                out.push(d);
             }
         }
 
-        if (sandboxSeverity !== null) {
-            for (const ident of findIdentifiers(masked)) {
-                if (ident.accessor !== '.') continue;
-                if (ident.receiver === 'io' || ident.receiver === 'package' || ident.receiver === 'debug') {
-                    const start = ident.start - ident.receiver.length - 1;
-                    const d = new vscode.Diagnostic(
-                        range(Math.max(0, start), ident.end),
-                        `The ${ident.receiver} library does not exist in MTAX scripts.`
-                        + (ident.receiver === 'io' ? ' Use the MTAX file functions (fileOpen, fileRead, fileWrite).' : ''),
-                        sandboxSeverity,
-                    );
-                    d.source = SOURCE;
-                    d.code = CODE.sandboxLibrary;
-                    out.push(d);
-                    continue;
-                }
-                if (ident.receiver === 'os' && this.restrictedOsFields().has(ident.name)) {
-                    const start = ident.start - 3;
-                    const d = new vscode.Diagnostic(
-                        range(Math.max(0, start), ident.end),
-                        `os.${ident.name} is removed by the MTAX sandbox. `
-                        + 'Only os.time, os.date, os.clock and os.difftime are available.',
-                        sandboxSeverity,
-                    );
-                    d.source = SOURCE;
-                    d.code = CODE.sandboxOsField;
-                    out.push(d);
-                }
-            }
-        }
+        for (const literal of analysis.strings) {
+            const fn = this.api.fn(literal.call);
+            const params = fn?.variants?.[0]?.params ?? [];
+            const eventArg = params.findIndex((p) => /^eventName$/i.test(p.name));
+            if (eventArg === -1 || eventArg !== literal.argIndex) continue;
 
-        for (const literal of scan.strings) {
-            const before = masked.slice(Math.max(0, literal.start - 200), literal.start);
-            const call = before.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*$/);
-            if (!call) continue;
-            const fn = this.api.fn(call[1]);
-            if (!fn) continue;
-            const params = fn.variants?.[0]?.params ?? [];
-            if (!params.length || !/^eventName$/i.test(params[0].name)) continue;
-
-            const literalRange = range(literal.contentStart, literal.contentEnd);
+            const literalRange = range(literal.start, literal.end);
             const event = this.api.event(literal.value);
 
             if (event) {
                 if (sideSeverity !== null && side !== 'shared' && event.side !== side) {
-                    const d = new vscode.Diagnostic(
+                    push(
                         literalRange,
                         `${event.name} is a ${event.side} event and this script runs on the ${side}.`,
+                        CODE.eventSide,
                         sideSeverity,
                     );
-                    d.source = SOURCE;
-                    d.code = CODE.eventSide;
-                    out.push(d);
                 }
                 continue;
             }
 
-            if (typoSeverity !== null && /^on[A-Z]/.test(literal.value) && !symbols?.events.has(literal.value)) {
+            if (typoSeverity !== null && /^on[A-Z]/.test(literal.value) && !scope?.events.has(literal.value)) {
                 const suggestion = this.nearestEvent(literal.value);
                 if (suggestion) {
-                    const d = new vscode.Diagnostic(
+                    push(
                         literalRange,
                         `No MTAX event is called ${literal.value}. Did you mean ${suggestion}?`,
+                        CODE.eventTypo,
                         typoSeverity,
                     );
-                    d.source = SOURCE;
-                    d.code = CODE.eventTypo;
-                    out.push(d);
                 }
             }
         }
 
+        // A script sitting in a resource that no list mentions never runs.
         if (config.get<boolean>('diagnostics.manifest', true) && this.resources.isUndeclared(document.uri.fsPath)) {
             const resource = this.resources.resourceFor(document.uri.fsPath);
-            const d = new vscode.Diagnostic(
+            push(
                 new vscode.Range(0, 0, 0, Math.max(1, document.lineAt(0).text.length)),
                 `This script is not listed in ${resource?.name ?? 'the resource'}'s ${MANIFEST_NAME}, so it never runs.`,
+                CODE.undeclaredFile,
                 vscode.DiagnosticSeverity.Information,
             );
-            d.source = SOURCE;
-            d.code = CODE.undeclaredFile;
-            out.push(d);
         }
 
         return out;
     }
+
+    private borrows(fsPath: string): boolean {
+        const resource = this.resources.resourceFor(fsPath);
+        if (!resource) return false;
+        return Object.values(resource.lists).some((entries) => entries.some((e) => e.startsWith(':')));
+    }
+
 
     private checkManifest(
         document: vscode.TextDocument,
@@ -483,28 +496,18 @@ export class MtaxDiagnostics implements vscode.Disposable {
             'dofile', 'loadfile', 'load', 'loadstring', 'require', 'collectgarbage',
             'os', 'io', 'package', 'debug', 'print', 'getmetatable', 'setmetatable',
         ]);
-        for (const ident of findIdentifiers(parsed.scan.masked)) {
-            if (ident.accessor) continue;
-            if (!forbidden.has(ident.name)) continue;
+        for (const occurrence of this.lua.forDocument(document).occurrences) {
+            if (occurrence.kind !== 'global') continue;
+            if (!forbidden.has(occurrence.name)) continue;
             push(
-                range(ident.start, ident.end),
-                `${ident.name} does not exist in the manifest sandbox. `
+                range(occurrence.start, occurrence.end),
+                `${occurrence.name} does not exist in the manifest sandbox. `
                 + 'The manifest declares the resource; it does not run logic.',
                 CODE.manifestSandbox,
             );
         }
 
         return out;
-    }
-
-    private symbolsFor(fsPath: string): ResourceSymbols | null {
-        const resource = this.resources.resourceFor(fsPath);
-        if (!resource) return null;
-        try {
-            return symbolsOf(resource.root, resource.lists);
-        } catch {
-            return null;
-        }
     }
 
     private removedGlobalsCache: Set<string> | null = null;

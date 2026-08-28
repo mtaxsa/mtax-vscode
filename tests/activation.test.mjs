@@ -39,13 +39,40 @@ class EventEmitter {
     dispose() {}
 }
 class DocumentLink { constructor(range, target) { this.range = range; this.target = target; } }
+class Location { constructor(uri, range) { this.uri = uri; this.range = range; } }
+class DocumentHighlight { constructor(range, kind) { this.range = range; this.kind = kind; } }
+class DocumentSymbol {
+    constructor(name, detail, kind, range, selectionRange) {
+        this.name = name; this.detail = detail; this.kind = kind;
+        this.range = range; this.selectionRange = selectionRange; this.children = [];
+    }
+}
+class SymbolInformation {
+    constructor(name, kind, containerName, location) {
+        this.name = name; this.kind = kind; this.containerName = containerName; this.location = location;
+    }
+}
+class SemanticTokensLegend {
+    constructor(types, modifiers) { this.tokenTypes = types; this.tokenModifiers = modifiers; }
+}
+class SemanticTokensBuilder {
+    constructor(legend) { this.legend = legend; this.tokens = []; }
+    push(line, char, length, type, modifiers) {
+        this.tokens.push({ line, char, length, type: this.legend.tokenTypes[type], modifiers });
+    }
+    build() { return { tokens: this.tokens }; }
+}
 class TextEdit {
     constructor(range, newText) { this.range = range; this.newText = newText; }
     static replace(range, newText) { return new TextEdit(range, newText); }
 }
 class WorkspaceEdit {
     constructor() { this.edits = new Map(); }
-    replace(uri, range, newText) { this.set(uri, [new TextEdit(range, newText)]); }
+    replace(uri, range, newText) {
+        const list = this.edits.get(uri.fsPath) ?? [];
+        list.push(new TextEdit(range, newText));
+        this.edits.set(uri.fsPath, list);
+    }
     set(uri, edits) { this.edits.set(uri.fsPath, edits); }
 }
 
@@ -63,10 +90,13 @@ const settings = new Map();
 const vscodeStub = {
     Position, Range, MarkdownString, SnippetString, CompletionItem, Diagnostic, CodeAction,
     Hover, SignatureHelp, SignatureInformation, ParameterInformation, EventEmitter, DocumentLink,
-    TextEdit, WorkspaceEdit,
+    TextEdit, WorkspaceEdit, Location, DocumentHighlight, DocumentSymbol, SymbolInformation,
+    SemanticTokensLegend, SemanticTokensBuilder,
     CompletionItemKind: new Proxy({}, { get: (_, k) => String(k) }),
     DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
     CodeActionKind: { QuickFix: 'quickfix' },
+    SymbolKind: new Proxy({}, { get: (_, k) => String(k) }),
+    DocumentHighlightKind: { Text: 0, Read: 1, Write: 2 },
     StatusBarAlignment: { Left: 1, Right: 2 },
     ConfigurationTarget: { Workspace: 2 },
     ThemeColor: class { constructor(id) { this.id = id; } },
@@ -90,6 +120,13 @@ const vscodeStub = {
         registerSignatureHelpProvider: (_s, p) => { registered.signature.push(p); return { dispose() {} }; },
         registerCodeActionsProvider: (_s, p) => { registered.codeActions.push(p); return { dispose() {} }; },
         registerDocumentLinkProvider: (_s, p) => { registered.links.push(p); return { dispose() {} }; },
+        registerDefinitionProvider: (_s, p) => { registered.definition = p; return { dispose() {} }; },
+        registerReferenceProvider: (_s, p) => { registered.references = p; return { dispose() {} }; },
+        registerDocumentHighlightProvider: (_s, p) => { registered.highlight = p; return { dispose() {} }; },
+        registerRenameProvider: (_s, p) => { registered.rename = p; return { dispose() {} }; },
+        registerDocumentSymbolProvider: (_s, p) => { registered.symbols = p; return { dispose() {} }; },
+        registerWorkspaceSymbolProvider: (p) => { registered.workspaceSymbols = p; return { dispose() {} }; },
+        registerDocumentSemanticTokensProvider: (_s, p) => { registered.semantic = p; return { dispose() {} }; },
     },
     workspace: {
         workspaceFolders: [],
@@ -153,6 +190,7 @@ const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mtax-test-'));
 const resourceRoot = path.join(workspace, 'my-resource');
 fs.mkdirSync(path.join(resourceRoot, 'server'), { recursive: true });
 fs.mkdirSync(path.join(resourceRoot, 'client'), { recursive: true });
+fs.mkdirSync(path.join(resourceRoot, 'shared'), { recursive: true });
 
 fs.writeFileSync(path.join(resourceRoot, 'mtaxmanifest.lua'), `resource_name = "my-resource"
 
@@ -164,13 +202,18 @@ client_files = {
     "client/main.lua",
 }
 
+shared_files = {
+    "shared/util.lua",
+}
+
 files = {
     "server/oops.lua",
 }
 `);
 
 const SERVER_LUA = `addEventHandler("onPlayerJoin", root, function()
-    outputDebugString(getPlayerName(source))
+    local who = getPlayerName(source)
+    outputDebugString(formatMoney(100) .. who)
 end)
 
 dxDrawText("hello", 0, 0)
@@ -181,6 +224,10 @@ require("something")
 
 fs.writeFileSync(path.join(resourceRoot, 'server', 'main.lua'), SERVER_LUA);
 fs.writeFileSync(path.join(resourceRoot, 'client', 'main.lua'), 'setElementPosition(localPlayer, 0, 0, 5)\n');
+fs.writeFileSync(path.join(resourceRoot, 'shared', 'util.lua'), `function formatMoney(amount)
+    return ("$%s"):format(tostring(amount))
+end
+`);
 
 function makeDocument(fsPath) {
     const text = fs.readFileSync(fsPath, 'utf8');
@@ -313,6 +360,119 @@ test('a quick fix is offered for the typo', () => {
         { diagnostics: typo },
     );
     assert.ok(actions.some((a) => a.title === 'Replace with setElementPosition'));
+});
+
+test('go to definition crosses files inside the resource', () => {
+    const document = makeDocument(path.join(resourceRoot, 'server', 'main.lua'));
+    const text = document.getText();
+    const at = document.positionAt(text.indexOf('formatMoney') + 2);
+
+    const locations = registered.definition.provideDefinition(document, at);
+    assert.equal(locations.length, 1, 'formatMoney is defined once');
+    assert.ok(locations[0].uri.fsPath.endsWith(path.join('shared', 'util.lua')));
+    assert.equal(locations[0].range.start.line, 0);
+});
+
+test('go to definition on a native lands in the generated definitions', () => {
+    const document = makeDocument(path.join(resourceRoot, 'client', 'main.lua'));
+    const at = document.positionAt(document.getText().indexOf('setElementPosition') + 3);
+    const locations = registered.definition.provideDefinition(document, at);
+    assert.equal(locations.length, 1);
+    assert.ok(locations[0].uri.fsPath.endsWith('mtax-shared.lua'));
+});
+
+test('a local resolves to its own declaration, not to a same-named global', () => {
+    const document = makeDocument(path.join(resourceRoot, 'server', 'main.lua'));
+    const text = document.getText();
+    const use = document.positionAt(text.lastIndexOf('who'));
+    const locations = registered.definition.provideDefinition(document, use);
+    assert.equal(locations.length, 1);
+    assert.equal(locations[0].range.start.line, 1, 'declared on the second line');
+});
+
+test('find references spans the resource', () => {
+    const document = makeDocument(path.join(resourceRoot, 'shared', 'util.lua'));
+    const at = document.positionAt(document.getText().indexOf('formatMoney') + 2);
+    const locations = registered.references.provideReferences(document, at, { includeDeclaration: true });
+
+    const files = new Set(locations.map((l) => path.basename(l.uri.fsPath)));
+    assert.deepEqual([...files].sort(), ['main.lua', 'util.lua']);
+    assert.equal(locations.length, 2);
+});
+
+test('references of a native list its call sites', () => {
+    const document = makeDocument(path.join(resourceRoot, 'server', 'main.lua'));
+    const at = document.positionAt(document.getText().indexOf('getPlayerName') + 2);
+    const locations = registered.references.provideReferences(document, at, { includeDeclaration: false });
+    assert.ok(locations.length >= 1);
+    assert.ok(locations.every((l) => l.uri.fsPath.endsWith('.lua')));
+});
+
+test('the outline reports the file structure', () => {
+    const document = makeDocument(path.join(resourceRoot, 'shared', 'util.lua'));
+    const symbols = registered.symbols.provideDocumentSymbols(document);
+    assert.equal(symbols.length, 1);
+    assert.equal(symbols[0].name, 'formatMoney');
+    assert.equal(symbols[0].detail, '(amount)');
+});
+
+test('highlight marks every occurrence of the name under the cursor', () => {
+    const document = makeDocument(path.join(resourceRoot, 'server', 'main.lua'));
+    const at = document.positionAt(document.getText().indexOf('local who') + 7);
+    const highlights = registered.highlight.provideDocumentHighlights(document, at);
+    assert.equal(highlights.length, 2, 'the declaration and the use');
+});
+
+test('rename rewrites every reference and refuses the API', () => {
+    const document = makeDocument(path.join(resourceRoot, 'server', 'main.lua'));
+    const text = document.getText();
+
+    const local = document.positionAt(text.indexOf('local who') + 7);
+    const edit = registered.rename.provideRenameEdits(document, local, 'playerName');
+    const edits = [...edit.edits.values()].flat();
+    assert.equal(edits.length, 2);
+    assert.ok(edits.every((e) => e.newText === 'playerName'));
+
+    const native = document.positionAt(text.indexOf('getPlayerName') + 2);
+    assert.throws(() => registered.rename.prepareRename(document, native), /cannot be renamed/);
+});
+
+test('semantic tokens colour natives, locals and the wrong side', () => {
+    const document = makeDocument(path.join(resourceRoot, 'server', 'main.lua'));
+    const result = registered.semantic.provideDocumentSemanticTokens(document);
+    const byName = new Map();
+    const text = document.getText();
+    for (const token of result.tokens) {
+        const lineStart = text.split('\n').slice(0, token.line).join('\n').length + (token.line ? 1 : 0);
+        const name = text.slice(lineStart + token.char, lineStart + token.char + token.length);
+        byName.set(name, token);
+    }
+
+    const DEFAULT_LIBRARY = 1 << 2;
+    const DEPRECATED = 1 << 4;
+
+    assert.equal(byName.get('getPlayerName').type, 'function');
+    assert.ok(byName.get('getPlayerName').modifiers & DEFAULT_LIBRARY);
+
+    assert.equal(byName.get('who').type, 'variable');
+    assert.equal(byName.get('who').modifiers & DEFAULT_LIBRARY, 0);
+
+    assert.equal(byName.get('root').type, 'variable');
+    assert.ok(byName.get('root').modifiers & DEFAULT_LIBRARY);
+
+    assert.ok(byName.get('dxDrawText').modifiers & DEPRECATED, 'the wrong side should read as deprecated');
+
+    assert.equal(byName.get('onPlayerJoin').type, 'event');
+});
+
+test('the outline of a broken file still comes back', () => {
+    const broken = path.join(resourceRoot, 'server', 'broken.lua');
+    fs.writeFileSync(broken, 'function good() end\nif then\nfunction alsoGood() end\n');
+    const document = makeDocument(broken);
+    const symbols = registered.symbols.provideDocumentSymbols(document);
+    assert.ok(symbols.some((s) => s.name === 'good'));
+    assert.ok(symbols.some((s) => s.name === 'alsoGood'));
+    fs.rmSync(broken);
 });
 
 test.after(() => {

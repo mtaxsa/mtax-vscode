@@ -1,10 +1,10 @@
 {
   "name": "mtax-lua",
   "displayName": "MTAX — Lua Modding",
-  "description": "Lua 5.4 tooling for MTAX resources: 1059 natives, 172 events, OOP API, manifest validation and resource scaffolding.",
-  "version": "0.1.0",
+  "description": "Lua 5.4 language support for MTAX resources: parser-backed navigation, semantic highlighting, 1059 natives, 172 events, OOP API, manifest validation and resource scaffolding.",
+  "version": "0.2.0",
   "publisher": "mtaxsa",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.85.0"
@@ -133,10 +133,26 @@
           ],
           "description": "Language used for hovers, completion details and signature help."
         },
+        "mtax.semanticHighlighting": {
+          "type": "boolean",
+          "default": true,
+          "description": "Colour names for what they are — native, event, local, parameter, property — instead of leaving them all the same. Needs semantic highlighting enabled in the theme; the bundled TextMate grammar colours the API either way."
+        },
         "mtax.diagnostics.enable": {
           "type": "boolean",
           "default": true,
           "description": "Report MTAX problems in Lua files."
+        },
+        "mtax.diagnostics.syntax": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "information",
+            "off"
+          ],
+          "default": "error",
+          "description": "Severity for Lua syntax errors reported by the built-in parser."
         },
         "mtax.diagnostics.wrongSide": {
           "type": "string",
@@ -247,7 +263,56 @@
       }
     ],
     "problemMatchers": [],
-    "jsonValidation": []
+    "jsonValidation": [],
+    "grammars": [
+      {
+        "path": "./syntaxes/mtax-injection.json",
+        "scopeName": "mtax.lua.injection",
+        "injectTo": [
+          "source.lua"
+        ]
+      },
+      {
+        "path": "./syntaxes/mtax-events.json",
+        "scopeName": "mtax.lua.events",
+        "injectTo": [
+          "source.lua"
+        ]
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "lua",
+        "scopes": {
+          "function.defaultLibrary": [
+            "support.function.mtax.lua",
+            "support.function"
+          ],
+          "variable.defaultLibrary": [
+            "support.constant.mtax.lua",
+            "support.variable"
+          ],
+          "class.defaultLibrary": [
+            "support.class.mtax.lua",
+            "support.class"
+          ],
+          "event": [
+            "support.constant.event.mtax.lua",
+            "constant.language"
+          ],
+          "method.defaultLibrary": [
+            "support.function.mtax.lua",
+            "entity.name.function"
+          ],
+          "property": [
+            "variable.other.property"
+          ],
+          "parameter": [
+            "variable.parameter"
+          ]
+        }
+      }
+    ]
   },
   "scripts": {
     "generate": "node tools/generate-api.mjs",
@@ -263,6 +328,8 @@
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
   }
 }

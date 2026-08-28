@@ -942,6 +942,43 @@ function emitDefinitions(api) {
     return files;
 }
 
+const escapeForRegex = (name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const alternation = (names) =>
+    [...new Set(names)].sort((a, b) => b.length - a.length).map(escapeForRegex).join('|');
+
+function emitGrammar(api) {
+    const natives = api.functions.map((f) => f.name);
+    const classes = [
+        ...api.oop.classes.map((c) => c.name),
+        ...api.oop.statics.map((c) => c.name),
+        'Vector2', 'Vector3', 'Vector4', 'Matrix',
+    ];
+    const globals = api.globals.map((g) => g.name);
+
+    return {
+        scopeName: 'mtax.lua.injection',
+        injectionSelector: 'L:source.lua -comment -string',
+        patterns: [
+            { name: 'support.function.mtax.lua', match: `(?<![.:\\w])(?:${alternation(natives)})\\b` },
+            { name: 'support.class.mtax.lua', match: `(?<![.:\\w])(?:${alternation(classes)})\\b` },
+            { name: 'support.constant.mtax.lua', match: `(?<![.:\\w])(?:${alternation(globals)})\\b` },
+        ],
+    };
+}
+
+function emitEventGrammar(api) {
+    return {
+        scopeName: 'mtax.lua.events',
+        injectionSelector: 'L:source.lua string.quoted',
+        patterns: [
+            {
+                name: 'support.constant.event.mtax.lua',
+                match: `\\b(?:${alternation(api.events.map((e) => e.name))})\\b`,
+            },
+        ],
+    };
+}
+
 const api = build();
 
 fs.mkdirSync(path.join(OUT_DIR, 'data'), { recursive: true });
@@ -954,4 +991,12 @@ fs.mkdirSync(defDir, { recursive: true });
 for (const [name, content] of Object.entries(defs)) {
     fs.writeFileSync(path.join(defDir, name), content, 'utf8');
     log(`wrote definitions/${name} (${(content.length / 1024).toFixed(0)} KB)`);
+}
+
+const syntaxDir = path.join(OUT_DIR, 'syntaxes');
+fs.mkdirSync(syntaxDir, { recursive: true });
+for (const [name, grammar] of [['mtax-injection.json', emitGrammar(api)], ['mtax-events.json', emitEventGrammar(api)]]) {
+    const content = JSON.stringify(grammar, null, 2);
+    fs.writeFileSync(path.join(syntaxDir, name), content, 'utf8');
+    log(`wrote syntaxes/${name} (${(content.length / 1024).toFixed(0)} KB)`);
 }

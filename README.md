@@ -38,6 +38,7 @@ extracted straight from the engine source and the wiki, never typed by hand.
 - [Configuration](#configuration)
 - [Where the data comes from](#where-the-data-comes-from)
 - [Developing the extension](#developing-the-extension)
+- [Releasing](#releasing)
 - [License](#license)
 
 ---
@@ -245,6 +246,39 @@ broken provider shows up before packaging. The colouring is checked against the 
 engine layered over VS Code's own Lua grammar, because an injection selector is easy to get
 subtly wrong and impossible to eyeball.
 
+### Releasing
+
+Two workflows live in `.github/workflows`.
+
+**CI** runs on every push to `main` and every pull request: typecheck and the full test suite on
+Linux *and* Windows (the extension does a lot of path work and its users are on Windows), then a
+package step that checks the built `.vsix` really contains `dist/`, `data/api.json`, the
+definitions and both grammars, and uploads it as an artifact.
+
+**Release** runs when a `v*.*.*` tag is pushed:
+
+```bash
+# bump the version and write its section in CHANGELOG.md first
+npm version 0.3.0 --no-git-tag-version
+git commit -am "release 0.3.0"
+git tag v0.3.0
+git push && git push --tags
+```
+
+It refuses to run if the tag and `package.json` disagree, or if that version was already
+released. Then it tests, packages, verifies the `.vsix` contents, checks the API snapshot is not
+stale (fails below 1,000 natives), and creates the GitHub release with the `.vsix` attached and
+the matching `CHANGELOG.md` section as the body. `Run workflow` → *dry run* does everything
+except create the release.
+
+Publishing to the Visual Studio Marketplace and Open VSX is opt-in: those steps only run once
+`VSCE_PAT` / `OVSX_PAT` exist as repository secrets, so a release never depends on a marketplace
+account being set up.
+
+Neither workflow runs `npm run generate` — the generator reads `MTAX-Purple/` and `wiki/`, which
+are not in this repository. `data/`, `definitions/` and `syntaxes/` are committed, and
+regenerating them is something you do locally when the engine or the wiki changes.
+
 ### Project layout
 
 ```
@@ -270,4 +304,4 @@ containers, which are not Lua at all.
 
 ## License
 
-Property of CMR Services — see [LICENSE](LICENSE). Copyright (c) 2026 CMR Services.
+Released under the [MIT License](LICENSE). Copyright (c) 2026 CMR Services.

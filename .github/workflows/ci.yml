@@ -100,6 +100,22 @@ jobs:
             echo "$contents" | grep -qx "$required" || { echo "::error::$required is missing from the package"; exit 1; }
           done
 
+          for forbidden in \
+            'extension/.github/' \
+            'extension/src/' \
+            'extension/tests/' \
+            'extension/out/' \
+            'extension/node_modules/' \
+            'extension/tools/release-notes.mjs' \
+            'extension/tsconfig.json' \
+            'extension/esbuild.mjs'
+          do
+            if echo "$contents" | grep -q "^$forbidden"; then
+              echo "::error::$forbidden should not be in the package — check .vscodeignore"
+              exit 1
+            fi
+          done
+
       - uses: actions/upload-artifact@v7
         with:
           name: mtax-lua-vsix
